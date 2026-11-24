@@ -1,0 +1,8 @@
+[[contracts]]
+fqn = "escrow::Escrow"
+
+[[contracts]]
+fqn = "testing::TestToken"
+
+[[contracts]]
+fqn = "testing::EvilToken"
