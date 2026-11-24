@@ -8,6 +8,30 @@ closed by a time limit. No owner, no fee, no upgrades.
 [SPEC.md](SPEC.md) says exactly what the contract does. The contract is `src/escrow.rs`, its tests
 are `src/tests.rs`, and `src/testing.rs` holds tokens for tests and test networks.
 
+## The web app
+
+`web/` is a static app: it reads deals from a node's storage with
+[odra-storage-reader](https://github.com/odradev/odra/tree/release/2.11.0/odra-storage-reader) and
+sends transactions with the client `cargo odra generate-client` writes. There is no backend.
+
+To run it against a local NCTL network:
+
+```sh
+docker run --rm --name mynctl -d -p 11101:11101 -p 14101:14101 -p 18101:18101 makesoftware/casper-nctl
+mkdir -p .node-keys      # then copy the users' keys out of the container, see .env.sample
+cargo odra build && cargo run --bin escrow_cli -- deploy
+cargo odra generate-client
+cd web
+npm run reader && npm install
+npm run contracts casper-net-1 && npm run devkeys
+npm run dev
+```
+
+On a local network the app signs with NCTL's test accounts, chosen in the header, instead of a
+wallet: CSPR.click knows only the public networks. `VITE_NETWORK=testnet` or `mainnet` builds the
+app for a public network, once the contract is deployed there and its addresses are written with
+`npm run contracts <chain>`.
+
 ## Setup
 
 This project needs three things on your machine:

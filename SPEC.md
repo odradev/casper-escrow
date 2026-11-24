@@ -253,6 +253,10 @@ and refunds part of what it leaves unused.
 | `offer_split`, first offer | 0.80 | 0.75 |
 | `offer_split` that settles, two payouts | 2.46 | 5.91 |
 
+On a network a CSPR deal is created through a small proxy program that carries the CSPR, which
+costs more than the table says: `create_deal` in CSPR consumed 5.3 CSPR on a local NCTL network,
+and 3.8 to 4.2 CSPR in a token.
+
 Every CSPR payout costs about 2.5 CSPR, which is why closing a CSPR deal costs more than closing
 a token deal. The first CSPR deal ever made costs 8.0 CSPR instead of 2.65, because it creates the
 contract's purse; whoever deploys the contract should make that deal.

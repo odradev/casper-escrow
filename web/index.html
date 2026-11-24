@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Casper Escrow</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+    />
+    <script>
+      // Read by the CSPR.click script, which src/main.ts loads on the public networks.
+      const clickUIOptions = { uiContainer: "csprclick-ui", rootAppElement: "#root", showTopBar: false };
+      const clickSDKOptions = {
+        appName: "Casper Escrow",
+        // The id CSPR.click accepts from localhost. A deployed site needs its own.
+        appId: "csprclick-template",
+        providers: ["casper-wallet", "ledger"],
+      };
+    </script>
+  </head>
+  <body>
+    <div id="csprclick-ui"></div>
+    <div id="root">
+      <header class="top">
+        <div class="wrap">
+          <a class="brand" href="#/" aria-label="Casper Escrow, home">
+            <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
+              <rect x="1" y="1" width="24" height="24" rx="6" fill="var(--accent)" />
+              <circle cx="7.5" cy="13" r="2.2" fill="var(--accent-ink)" />
+              <circle cx="18.5" cy="13" r="2.2" fill="var(--accent-ink)" />
+              <rect x="11" y="9" width="4" height="8" rx="1" fill="var(--accent-ink)" />
+            </svg>
+            Casper Escrow
+          </a>
+          <nav class="nav" aria-label="Main">
+            <a href="#/" data-nav="home">Home</a>
+            <a href="#/deals" data-nav="deals">My deals</a>
+            <a href="#/new" data-nav="new">New deal</a>
+          </nav>
+          <div class="who">
+            <span class="net" id="network"></span>
+            <select id="dev-account" class="wallet" aria-label="Development account" hidden></select>
+            <button id="connect" class="btn small" disabled>Connect wallet</button>
+            <span id="account" class="wallet" hidden><span class="dot"></span><span id="account-name"></span></span>
+            <button id="disconnect" class="btn small" hidden>Sign out</button>
+          </div>
+        </div>
+      </header>
+
+      <main><div class="wrap" id="view"></div></main>
+
+      <footer>
+        <div class="wrap">
+          <span
+            >Casper Escrow is open-source software built with Odra. It is not a company and does not hold funds on
+            anyone’s behalf.</span
+          >
+          <span id="footer-contract"></span>
+        </div>
+      </footer>
+
+      <div id="toast" class="toast" role="status" hidden>
+        <span id="toast-text"></span>
+        <a id="toast-link" target="_blank" rel="noopener" hidden>View</a>
+        <button id="toast-close" aria-label="Dismiss">×</button>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

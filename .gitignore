@@ -12,3 +12,10 @@
 *.pem
 .env.*
 !.env.sample
+
+# Keys of the local NCTL network.
+.node-keys/
+
+# Addresses on a local NCTL network: they change every time it restarts.
+resources/casper-net-1-contracts.toml
+web/src/contracts/casper-net-1.json
