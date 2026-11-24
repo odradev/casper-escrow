@@ -15,8 +15,10 @@
       const clickUIOptions = { uiContainer: "csprclick-ui", rootAppElement: "#root", showTopBar: false };
       const clickSDKOptions = {
         appName: "Casper Escrow",
-        // The id CSPR.click accepts from localhost. A deployed site needs its own.
-        appId: "csprclick-template",
+        // A deployed site needs its own id, registered with CSPR.click for its domain and given
+        // to the build as VITE_CSPR_CLICK_APP_ID. Without one, the id CSPR.click accepts from
+        // localhost is used.
+        appId: "%VITE_CSPR_CLICK_APP_ID%".startsWith("%") ? "csprclick-template" : "%VITE_CSPR_CLICK_APP_ID%",
         providers: ["casper-wallet", "ledger"],
       };
     </script>
@@ -49,6 +51,8 @@
           </div>
         </div>
       </header>
+
+      <div class="demo" id="demo" hidden></div>
 
       <main><div class="wrap" id="view"></div></main>
 

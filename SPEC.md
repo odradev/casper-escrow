@@ -1,8 +1,8 @@
 # Escrow contract: specification
 
-This document describes what the `Escrow` contract in `src/escrow.rs` does. The contract is meant
-to be deployed once on the Casper mainnet and never changed, so everything here is final once it
-is deployed. Read it as the list of things to agree with before that.
+This document describes what the `Escrow` contract in `src/escrow.rs` does. A deployment of the
+contract cannot be changed, so everything here is final once it is deployed. Read it as the list
+of things to agree with before that. [DEPLOY.md](DEPLOY.md) says how to deploy one.
 
 ## What it is
 
@@ -15,8 +15,9 @@ deal is settled:
   rule written into the deal when it was created;
 - at any point, the two agree on a split themselves and the deal closes with it.
 
-The contract has no owner, no fee, no settings and no pause. It is deployed locked: the package
-cannot get a new version. One contract holds every deal.
+The contract has no owner, no settings and no pause. It is deployed locked: the package cannot get
+a new version. One contract holds every deal. Whoever deploys it may set a commission, once: see
+[The commission](#the-commission).
 
 **No open deal can be stuck.** Each of the three open states has a time limit, and from that
 moment anyone can call `settle` to close the deal by the rule of its state.
@@ -149,6 +150,26 @@ split.
   pay that party fail and change nothing; the other paths stay open. For example, if the seller
   cannot be paid, `refund` still works.
 
+## The commission
+
+A deployment has a commission, set by its two constructor arguments and fixed from then on:
+
+- `commission_bps`: hundredths of a percent, from 0 (no commission) to 1000 (10%);
+- `commission_recipient`: the account it is paid to. It must be an account, not a contract,
+  because Casper pays CSPR to accounts only.
+
+The commission is taken out of what the seller is paid, whenever the seller is paid anything: a
+release, a payment after the review, the seller's part of the arbiter's decision, of the default
+split or of a settlement. It is rounded down. Nothing is taken from what goes back to the buyer
+or to the arbiter, so a deal that is refunded costs nobody a commission.
+
+The amounts named in `resolve` and `offer_split`, and `default_seller_bps`, are the seller's part
+before the commission. A deal stores what the seller received after it (`to_seller`) and the
+commission itself (`commission`).
+
+The commission is one more payout when a deal closes. If the token refuses to pay the recipient,
+the paths that pay the seller fail; a refund still works.
+
 ## Entry points
 
 Entry points that change state return nothing. The id of a new deal is in the `DealCreated` event.
@@ -163,6 +184,8 @@ Entry points that change state return nothing. The id of a new deal is in the `D
 | `resolve(deal_id, seller_share)` | the arbiter | Decides a dispute. |
 | `offer_split(deal_id, seller_share)` | the buyer or the seller | Sets, replaces or withdraws the caller's settlement offer. Closes the deal if both offers are equal. |
 | `settle(deal_id)` | anyone | Closes a deal whose time limit has passed. |
+| `commission_bps()` | view | The commission of this deployment. |
+| `commission_recipient()` | view | The account the commission is paid to. |
 | `deal(deal_id)` | view | The deal. |
 | `deals_count()` | view | The number of deals. Ids run from `0`. |
 | `deals_count_of(account)` | view | The number of deals the account is a party of, in any role. |
@@ -184,7 +207,7 @@ An app reads the contract's state from the node with `odra-storage-reader` and t
 | `ids_of` | `account:index` | The id of the deal at that position. |
 
 A deal keeps `created_at`, `delivered_at`, `disputed_at` and `closed_at` (zero means "not yet") and
-`to_seller`, `to_buyer`, `to_arbiter`, and the two current settlement offers, `buyer_offer` and
+`to_seller`, `to_buyer`, `to_arbiter`, `commission`, and the two current settlement offers, `buyer_offer` and
 `seller_offer`, so its page can be drawn from one read, without events.
 
 Anyone can open a deal naming any account as its seller or arbiter, so an account's list can
@@ -199,7 +222,7 @@ offers, not as obligations.
 | `DealDelivered` | `deal_id`, `review_ends_at`. |
 | `DealDisputed` | `deal_id`, `dispute_ends_at`. |
 | `SplitOffered` | `deal_id`, `by`, `seller_share` (empty when withdrawn). |
-| `DealClosed` | `deal_id`, `state`, `to_seller`, `to_buyer`, `to_arbiter`. |
+| `DealClosed` | `deal_id`, `state`, `to_seller`, `to_buyer`, `to_arbiter`, `commission`. |
 
 ## Errors
 
@@ -234,6 +257,8 @@ offers, not as obligations.
 | 27 | `ShareTooLarge` | The seller's share is more than the deposit, or, in the arbiter's decision, more than the deposit less the fee. |
 | 28 | `ContractInCsprDeal` | A party of a CSPR deal is a contract. |
 | 29 | `NotParty` | Only the buyer or the seller may do this. |
+| 30 | `CommissionTooLarge` | At deployment: the commission is more than 10%. |
+| 31 | `CommissionToContract` | At deployment: the commission recipient is a contract. |
 
 ## What a call costs
 
@@ -243,7 +268,7 @@ and refunds part of what it leaves unused.
 
 | Call | Token deal | CSPR deal |
 |---|---|---|
-| deploying the contract | 340.6 CSPR | |
+| deploying the contract | 358.7 CSPR | |
 | `create_deal` | 3.75 | 2.65 |
 | `mark_delivered` | 0.75 | 0.71 |
 | `dispute` | 0.75 | 0.71 |
@@ -253,13 +278,13 @@ and refunds part of what it leaves unused.
 | `offer_split`, first offer | 0.80 | 0.75 |
 | `offer_split` that settles, two payouts | 2.46 | 5.91 |
 
-On a network a CSPR deal is created through a small proxy program that carries the CSPR, which
-costs more than the table says: `create_deal` in CSPR consumed 5.3 CSPR on a local NCTL network,
-and 3.8 to 4.2 CSPR in a token.
+The table is for a deployment with no commission; a commission adds one payout to every closing
+that pays the seller. On a local NCTL network `create_deal` consumed 2.6 to 5.3 CSPR in CSPR and
+3.8 to 4.2 CSPR in a token, and a release in CSPR with a commission 5.8 CSPR.
 
 Every CSPR payout costs about 2.5 CSPR, which is why closing a CSPR deal costs more than closing
-a token deal. The first CSPR deal ever made costs 8.0 CSPR instead of 2.65, because it creates the
-contract's purse; whoever deploys the contract should make that deal.
+a token deal. The contract creates its CSPR purse when it is deployed, so the first deal does not
+pay for that.
 
 ## What the contract does not do
 
@@ -280,10 +305,10 @@ contract's purse; whoever deploys the contract should make that deal.
 ## Tests
 
 `cargo odra test` runs the tests on OdraVM, `cargo odra test -b casper` on the Casper VM with the
-built wasm files. Both run the same 43 tests in `src/tests.rs`: every argument check, the whole
-table of who may do what, every path in tokens and in CSPR, settlements between the parties, the exact moments of the time limits,
+built wasm files. Both run the same 52 tests in `src/tests.rs`: every argument check, the whole
+table of who may do what, every path in tokens and in CSPR, settlements between the parties, the commission, the exact moments of the time limits,
 rounding, many deals at once, and tokens that keep a part of a transfer, move nothing, call back
 into the contract or refuse to pay a party (`EvilToken` in `src/testing.rs`).
 
-Not done yet: a run on a network, a review by somebody who did not write the contract, and an
-audit.
+The paths were also walked through in the web app on a local NCTL network. Not done: a run on a
+public network, a review by somebody who did not write the contract, and an audit.

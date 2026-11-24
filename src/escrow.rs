@@ -2,7 +2,8 @@
 //! between the buyer and the seller is settled. Every open deal can always be closed by somebody:
 //! each state has a time limit after which anyone may apply the rule the deal was created with.
 //!
-//! The contract has no owner, no fee and no configuration, and cannot be upgraded.
+//! The contract has no owner and cannot be upgraded. Whoever deploys it may set a commission, a
+//! part of what sellers are paid, once and for good.
 
 #![allow(clippy::too_many_arguments)]
 
@@ -22,6 +23,8 @@ pub const MAX_PERIOD: u64 = 365 * 24 * HOUR;
 pub const MAX_MEMO_LEN: usize = 256;
 /// `default_seller_bps` of a deal that gives the seller everything.
 pub const BPS: u32 = 10_000;
+/// The largest commission a deployment can set: 10% of what a seller is paid.
+pub const MAX_COMMISSION_BPS: u32 = 1_000;
 
 /// Where a deal stands. `Funded`, `Delivered` and `Disputed` are open: the deposit is in the
 /// contract. The other five are closed, and say how the deposit left it.
@@ -90,6 +93,8 @@ pub struct Deal {
     pub to_buyer: U256,
     /// What the arbiter received when the deal closed.
     pub to_arbiter: U256,
+    /// The commission taken out of the seller's part when the deal closed.
+    pub commission: U256,
     /// What the buyer currently offers the seller in a settlement, if anything.
     pub buyer_offer: Option<U256>,
     /// What the seller currently asks for in a settlement, if anything.
@@ -158,6 +163,10 @@ pub enum Error {
     ContractInCsprDeal = 28,
     /// Only the buyer or the seller of the deal may do this.
     NotParty = 29,
+    /// The commission is more than `MAX_COMMISSION_BPS`.
+    CommissionTooLarge = 30,
+    /// The commission must be paid to an account: Casper pays CSPR to accounts only.
+    CommissionToContract = 31,
 }
 
 /// A buyer deposited for a seller.
@@ -209,9 +218,11 @@ pub struct DealClosed {
     pub deal_id: u64,
     /// How it closed: `Released`, `Refunded`, `Resolved`, `Split` or `Settled`.
     pub state: DealState,
+    /// What the seller received, after the commission.
     pub to_seller: U256,
     pub to_buyer: U256,
     pub to_arbiter: U256,
+    pub commission: U256,
 }
 
 /// Holds the deposits of buyers until each deal is settled.
@@ -228,10 +239,30 @@ pub struct Escrow {
     count_of: Mapping<Address, u64>,
     /// The ids of the deals of an account, by their position: `0` to `count_of - 1`.
     ids_of: Mapping<(Address, u64), u64>,
+    /// The commission, in hundredths of a percent of what a seller is paid. Set at deployment.
+    commission_bps: Var<u32>,
+    /// The account the commission is paid to. Set at deployment.
+    commission_recipient: Var<Address>,
 }
 
 #[odra::module]
 impl Escrow {
+    /// Sets the commission of this deployment, for good: `commission_bps` hundredths of a percent
+    /// of everything a seller is paid go to `commission_recipient`. Zero means no commission.
+    pub fn init(&mut self, commission_bps: u32, commission_recipient: Address) {
+        if commission_bps > MAX_COMMISSION_BPS {
+            self.env().revert(Error::CommissionTooLarge);
+        }
+        if commission_recipient.is_contract() {
+            self.env().revert(Error::CommissionToContract);
+        }
+        self.commission_bps.set(commission_bps);
+        self.commission_recipient.set(commission_recipient);
+        // Reading the balance creates the purse the contract keeps CSPR in. Without this the first
+        // CSPR deal would pay for creating it, about 5 CSPR more than any later one.
+        let _ = self.env().self_balance();
+    }
+
     /// Opens a deal with the caller as the buyer and takes the deposit.
     ///
     /// For a CSPR deal `token` is `None`, exactly `deposit` motes must be attached and every
@@ -349,6 +380,7 @@ impl Escrow {
                 to_seller: U256::zero(),
                 to_buyer: U256::zero(),
                 to_arbiter: U256::zero(),
+                commission: U256::zero(),
                 buyer_offer: None,
                 seller_offer: None,
             },
@@ -538,6 +570,17 @@ impl Escrow {
         self.close(deal_id, deal, state, to_seller, U256::zero());
     }
 
+    /// Returns the commission of this deployment, in hundredths of a percent of what a seller is
+    /// paid.
+    pub fn commission_bps(&self) -> u32 {
+        self.commission_bps.get_or_default()
+    }
+
+    /// Returns the account the commission is paid to.
+    pub fn commission_recipient(&self) -> Address {
+        self.commission_recipient.get().unwrap_or_revert(self)
+    }
+
     /// Returns the deal with the given id.
     pub fn deal(&self, deal_id: u64) -> Deal {
         self.get_deal(deal_id)
@@ -587,28 +630,38 @@ impl Escrow {
         self.count_of.set(account, position + 1);
     }
 
-    /// Closes the deal and pays the deposit out: `to_seller` to the seller, `to_arbiter` to the
-    /// arbiter and the rest to the buyer. The deal is stored as closed before anything is paid.
+    /// Closes the deal and pays the deposit out: `seller_part` to the seller, less the commission
+    /// of this deployment, `to_arbiter` to the arbiter and the rest to the buyer. The deal is
+    /// stored as closed before anything is paid.
     fn close(
         &mut self,
         deal_id: u64,
         mut deal: Deal,
         state: DealState,
-        to_seller: U256,
+        seller_part: U256,
         to_arbiter: U256,
     ) {
-        let to_buyer = deal.deposit - to_seller - to_arbiter;
+        let to_buyer = deal.deposit - seller_part - to_arbiter;
+        // `seller_part` is at most the deposit, which is small enough to be multiplied.
+        let commission =
+            seller_part * U256::from(self.commission_bps.get_or_default()) / U256::from(BPS);
+        let to_seller = seller_part - commission;
         deal.state = state;
         deal.closed_at = self.env().get_block_time();
         deal.to_seller = to_seller;
         deal.to_buyer = to_buyer;
         deal.to_arbiter = to_arbiter;
+        deal.commission = commission;
         self.deals.set(&deal_id, deal.clone());
 
         self.pay(&deal.token, &deal.seller, to_seller);
         self.pay(&deal.token, &deal.buyer, to_buyer);
         if let Some(arbiter) = deal.arbiter {
             self.pay(&deal.token, &arbiter, to_arbiter);
+        }
+        if !commission.is_zero() {
+            let recipient = self.commission_recipient.get().unwrap_or_revert(self);
+            self.pay(&deal.token, &recipient, commission);
         }
 
         self.env().emit_event(DealClosed {
@@ -617,6 +670,7 @@ impl Escrow {
             to_seller,
             to_buyer,
             to_arbiter,
+            commission,
         });
     }
 

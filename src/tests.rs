@@ -28,17 +28,31 @@ struct Setup {
     seller: Address,
     arbiter: Address,
     stranger: Address,
+    /// The account commissions are paid to.
+    collector: Address,
 }
 
 /// Deploys the contracts and gives the buyer tokens and an allowance for all of them.
 fn setup() -> Setup {
+    setup_with_commission(0)
+}
+
+/// Deploys the contracts with the given commission, paid to account 5.
+fn setup_with_commission(commission_bps: u32) -> Setup {
     let env = odra_test::env();
     let buyer = env.get_account(1);
     let seller = env.get_account(2);
     let arbiter = env.get_account(3);
     let stranger = env.get_account(4);
     let mut token = TestToken::deploy(&env, NoArgs);
-    let escrow = Escrow::deploy(&env, NoArgs);
+    let collector = env.get_account(5);
+    let escrow = Escrow::deploy(
+        &env,
+        EscrowInitArgs {
+            commission_bps,
+            commission_recipient: collector,
+        },
+    );
 
     env.set_caller(buyer);
     token.faucet();
@@ -52,6 +66,7 @@ fn setup() -> Setup {
         seller,
         arbiter,
         stranger,
+        collector,
     }
 }
 
@@ -613,6 +628,7 @@ fn the_buyer_releases_to_the_seller() {
                 to_seller: U256::from(AMOUNT),
                 to_buyer: U256::zero(),
                 to_arbiter: U256::zero(),
+                commission: U256::zero(),
             }
         ));
     }
@@ -923,6 +939,7 @@ fn equal_offers_settle_the_deal_in_every_open_state() {
                     to_seller: U256::from(700),
                     to_buyer: U256::from(300),
                     to_arbiter: U256::zero(),
+                    commission: U256::zero(),
                 }
             ));
         }
@@ -1105,6 +1122,198 @@ fn cspr_is_split_by_the_arbiter() {
     assert_eq!(cspr(&s, s.buyer), buyer + (AMOUNT - FEE - 600));
     assert_eq!(s.escrow.deal(id).to_arbiter, U256::from(FEE));
     assert_eq!(s.env.balance_of(&s.escrow), U512::zero());
+}
+
+// ---------------------------------------------------------------------------------------------
+// The commission of a deployment
+// ---------------------------------------------------------------------------------------------
+
+/// A commission of 2.5%.
+const COMMISSION: u32 = 250;
+
+fn collected(s: &Setup) -> U256 {
+    s.token.balance_of(&s.collector)
+}
+
+#[test]
+fn the_commission_is_set_at_deployment() {
+    let s = setup_with_commission(COMMISSION);
+    assert_eq!(s.escrow.commission_bps(), COMMISSION);
+    assert_eq!(s.escrow.commission_recipient(), s.collector);
+
+    let free = setup();
+    assert_eq!(free.escrow.commission_bps(), 0);
+}
+
+#[test]
+fn a_commission_over_the_limit_or_paid_to_a_contract_is_rejected() {
+    let env = odra_test::env();
+    let collector = env.get_account(5);
+    let contract = TestToken::deploy(&env, NoArgs).address();
+    assert_eq!(
+        Escrow::try_deploy(
+            &env,
+            EscrowInitArgs {
+                commission_bps: MAX_COMMISSION_BPS + 1,
+                commission_recipient: collector,
+            }
+        )
+        .map(|_| ()),
+        err(Error::CommissionTooLarge)
+    );
+    assert_eq!(
+        Escrow::try_deploy(
+            &env,
+            EscrowInitArgs {
+                commission_bps: COMMISSION,
+                commission_recipient: contract,
+            }
+        )
+        .map(|_| ()),
+        err(Error::CommissionToContract)
+    );
+    let largest = Escrow::deploy(
+        &env,
+        EscrowInitArgs {
+            commission_bps: MAX_COMMISSION_BPS,
+            commission_recipient: collector,
+        },
+    );
+    assert_eq!(largest.commission_bps(), MAX_COMMISSION_BPS);
+}
+
+#[test]
+fn the_commission_comes_out_of_a_release() {
+    let mut s = setup_with_commission(COMMISSION);
+    let id = New::token(&s).create(&mut s);
+    s.env.set_caller(s.buyer);
+    s.escrow.release(id);
+
+    // 2.5% of 1000 is 25: the seller gets 975.
+    assert_eq!(balances(&s), after_deposit_plus(0, 975, 0, 0));
+    assert_eq!(collected(&s), U256::from(25));
+    let deal = s.escrow.deal(id);
+    assert_eq!(deal.to_seller, U256::from(975));
+    assert_eq!(deal.commission, U256::from(25));
+    assert!(s.env.emitted_event(
+        &s.escrow,
+        DealClosed {
+            deal_id: id,
+            state: DealState::Released,
+            to_seller: U256::from(975),
+            to_buyer: U256::zero(),
+            to_arbiter: U256::zero(),
+            commission: U256::from(25),
+        }
+    ));
+}
+
+#[test]
+fn the_commission_comes_out_of_a_payment_after_the_review() {
+    let mut s = setup_with_commission(COMMISSION);
+    let id = New::token(&s).create(&mut s);
+    deliver(&mut s, id);
+    s.env.advance_block_time(REVIEW);
+    s.escrow.settle(id);
+    assert_eq!(balances(&s), after_deposit_plus(0, 975, 0, 0));
+    assert_eq!(collected(&s), U256::from(25));
+}
+
+#[test]
+fn the_commission_comes_out_of_the_sellers_part_of_every_split() {
+    // The arbiter awards 600: 15 of it is the commission. The buyer and the arbiter lose nothing.
+    let mut s = setup_with_commission(COMMISSION);
+    let id = New::token(&s).create(&mut s);
+    deliver(&mut s, id);
+    dispute(&mut s, id);
+    s.env.set_caller(s.arbiter);
+    s.escrow.resolve(id, U256::from(600));
+    assert_eq!(balances(&s), after_deposit_plus(350, 585, FEE, 0));
+    assert_eq!(collected(&s), U256::from(15));
+
+    // The default split gives the seller 300: the commission is 7.5, rounded down to 7.
+    let mut s = setup_with_commission(COMMISSION);
+    let id = New::token(&s).create(&mut s);
+    deliver(&mut s, id);
+    dispute(&mut s, id);
+    s.env.advance_block_time(DISPUTE);
+    s.escrow.settle(id);
+    assert_eq!(balances(&s), after_deposit_plus(700, 293, 0, 0));
+    assert_eq!(collected(&s), U256::from(7));
+
+    // The parties settle on 700 for the seller: the commission is 17.5, rounded down to 17.
+    let mut s = setup_with_commission(COMMISSION);
+    let id = New::token(&s).create(&mut s);
+    let (buyer, seller) = (s.buyer, s.seller);
+    offer(&mut s, buyer, id, Some(700)).unwrap();
+    offer(&mut s, seller, id, Some(700)).unwrap();
+    assert_eq!(balances(&s), after_deposit_plus(300, 683, 0, 0));
+    assert_eq!(collected(&s), U256::from(17));
+    assert_eq!(s.escrow.deal(id).commission, U256::from(17));
+}
+
+#[test]
+fn nothing_is_taken_from_a_deposit_that_goes_back() {
+    let mut s = setup_with_commission(COMMISSION);
+    let refunded = New::token(&s).create(&mut s);
+    s.env.set_caller(s.seller);
+    s.escrow.refund(refunded);
+    assert_eq!(balances(&s), after_deposit_plus(AMOUNT, 0, 0, 0));
+
+    let undelivered = New::token(&s).create(&mut s);
+    s.env.advance_block_time(DELIVERY);
+    s.escrow.settle(undelivered);
+    assert_eq!(collected(&s), U256::zero());
+    assert_eq!(s.escrow.deal(undelivered).commission, U256::zero());
+    assert_eq!(s.token.balance_of(&s.buyer), TestToken::faucet_amount());
+}
+
+#[test]
+fn a_commission_smaller_than_one_unit_is_not_taken() {
+    let mut s = setup_with_commission(COMMISSION);
+    let id = New {
+        deposit: U256::from(39),
+        fee: U256::zero(),
+        ..New::token(&s)
+    }
+    .create(&mut s);
+    s.env.set_caller(s.buyer);
+    s.escrow.release(id);
+    // 2.5% of 39 is 0.975.
+    assert_eq!(s.token.balance_of(&s.seller), U256::from(39));
+    assert_eq!(collected(&s), U256::zero());
+}
+
+#[test]
+fn the_commission_is_paid_in_cspr_too() {
+    let mut s = setup_with_commission(COMMISSION);
+    let id = New::cspr(&s).create(&mut s);
+    let (seller, collector) = (cspr(&s, s.seller), cspr(&s, s.collector));
+    s.env.set_caller(s.buyer);
+    s.escrow.release(id);
+    assert_eq!(cspr(&s, s.seller), seller + 975);
+    assert_eq!(cspr(&s, s.collector), collector + 25);
+    assert_eq!(s.env.balance_of(&s.escrow), U512::zero());
+}
+
+#[test]
+fn a_token_that_refuses_the_commission_leaves_the_refund_open() {
+    let mut s = setup_with_commission(COMMISSION);
+    let mut evil = evil(&s, HONEST);
+    let id = New {
+        token: Some(evil.address()),
+        ..New::token(&s)
+    }
+    .create(&mut s);
+    evil.set_blocked(s.collector);
+    evil.set_mode(BLOCK);
+
+    s.env.set_caller(s.buyer);
+    assert_eq!(s.escrow.try_release(id), err(EvilTokenError::Blocked));
+    assert_eq!(evil.balance_of(&s.escrow.address()), U256::from(AMOUNT));
+    s.env.set_caller(s.seller);
+    s.escrow.refund(id);
+    assert_eq!(evil.balance_of(&s.buyer), U256::from(AMOUNT));
 }
 
 // ---------------------------------------------------------------------------------------------

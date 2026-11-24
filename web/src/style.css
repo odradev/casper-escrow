@@ -78,6 +78,9 @@ a:hover { text-decoration: underline; }
 .wallet { padding: 6px 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); font-weight: 500; }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
 
+.demo { background: var(--held-soft); color: var(--held); font-size: 13px; padding: 8px 16px; text-align: center; }
+.demo a { color: inherit; text-decoration: underline; }
+
 /* buttons */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-weight: 600; color: var(--ink); }
 .btn:hover:not(:disabled) { border-color: var(--muted); text-decoration: none; }

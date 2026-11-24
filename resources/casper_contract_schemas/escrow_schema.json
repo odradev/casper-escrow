@@ -116,6 +116,11 @@
             "ty": "U256"
           },
           {
+            "name": "commission",
+            "description": null,
+            "ty": "U256"
+          },
+          {
             "name": "buyer_offer",
             "description": null,
             "ty": {
@@ -159,6 +164,11 @@
           },
           {
             "name": "to_arbiter",
+            "description": null,
+            "ty": "U256"
+          },
+          {
+            "name": "commission",
             "description": null,
             "ty": "U256"
           }
@@ -360,6 +370,16 @@
       "name": "BpsTooLarge",
       "description": "`default_seller_bps` is more than 10000.",
       "discriminant": 6
+    },
+    {
+      "name": "CommissionToContract",
+      "description": "The commission must be paid to an account: Casper pays CSPR to accounts only.",
+      "discriminant": 31
+    },
+    {
+      "name": "CommissionTooLarge",
+      "description": "The commission is more than `MAX_COMMISSION_BPS`.",
+      "discriminant": 30
     },
     {
       "name": "ContractInCsprDeal",
@@ -718,6 +738,26 @@
       "access": "public"
     },
     {
+      "name": "commission_bps",
+      "description": "Returns the commission of this deployment, in hundredths of a percent of what a seller is paid.",
+      "is_mutable": false,
+      "is_payable": false,
+      "arguments": [],
+      "return_ty": "U32",
+      "is_contract_context": true,
+      "access": "public"
+    },
+    {
+      "name": "commission_recipient",
+      "description": "Returns the account the commission is paid to.",
+      "is_mutable": false,
+      "is_payable": false,
+      "arguments": [],
+      "return_ty": "Key",
+      "is_contract_context": true,
+      "access": "public"
+    },
+    {
       "name": "deal",
       "description": "Returns the deal with the given id.",
       "is_mutable": false,
@@ -809,7 +849,7 @@
   ],
   "call": {
     "wasm_file_name": "Escrow.wasm",
-    "description": null,
+    "description": "Sets the commission of this deployment, for good: `commission_bps` hundredths of a percent of everything a seller is paid go to `commission_recipient`. Zero means no commission.",
     "arguments": [
       {
         "name": "odra_cfg_package_hash_key_name",
@@ -833,6 +873,18 @@
         "name": "odra_cfg_is_upgrade",
         "description": "The arg name for telling the installer that the contract is being upgraded.",
         "ty": "Bool",
+        "optional": false
+      },
+      {
+        "name": "commission_bps",
+        "description": null,
+        "ty": "U32",
+        "optional": false
+      },
+      {
+        "name": "commission_recipient",
+        "description": null,
+        "ty": "Key",
         "optional": false
       }
     ]
@@ -880,6 +932,18 @@
           "kind": "value",
           "ty": "U64"
         }
+      },
+      {
+        "name": "commission_bps",
+        "index": 5,
+        "kind": "value",
+        "ty": "U32"
+      },
+      {
+        "name": "commission_recipient",
+        "index": 6,
+        "kind": "value",
+        "ty": "Key"
       }
     ]
   }

@@ -3,7 +3,11 @@
 An escrow contract for the [Casper Network](https://casper.network), written in
 [Odra](https://odra.dev). A buyer's deposit, in CSPR or a CEP-18 token, waits in the contract until
 the deal with the seller is settled: released, refunded, decided by an arbiter the two chose, or
-closed by a time limit. No owner, no fee, no upgrades.
+closed by a time limit. No owner and no upgrades; a deployment may take a commission, fixed when
+it is deployed.
+
+This repository is a demo. The contract has not been audited and is not deployed on the mainnet.
+[DEPLOY.md](DEPLOY.md) is for whoever wants to run it there.
 
 [SPEC.md](SPEC.md) says exactly what the contract does. The contract is `src/escrow.rs`, its tests
 are `src/tests.rs`, and `src/testing.rs` holds tokens for tests and test networks.

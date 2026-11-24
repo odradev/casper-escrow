@@ -24,6 +24,8 @@ export interface Network {
   explorer: string | null;
   /** Whether transactions are signed by the development wallet instead of CSPR.click. */
   devWallet: boolean;
+  /** Whether this is a place to try the contract, not to trust it with money. */
+  demo: boolean;
   /** Whether the test token and its faucet are offered. */
   testToken: boolean;
   names: NameService | null;
@@ -45,6 +47,7 @@ const NETWORKS: Record<string, Network> = {
     speculativeUrl: `${window.location.origin}/nctl`,
     explorer: null,
     devWallet: true,
+    demo: true,
     testToken: true,
     // A local network has no names. The mainnet's are read instead, so the name fields can be
     // tried: the accounts they point at are the same keys on every network.
@@ -57,6 +60,7 @@ const NETWORKS: Record<string, Network> = {
     speculativeUrl: "https://testnet-speculative-rpc.odra.dev",
     explorer: "https://testnet.cspr.live",
     devWallet: false,
+    demo: true,
     testToken: true,
     names: null,
   },
@@ -67,6 +71,7 @@ const NETWORKS: Record<string, Network> = {
     speculativeUrl: "https://mainnet-rpc.odra.dev",
     explorer: "https://cspr.live",
     devWallet: false,
+    demo: false,
     testToken: false,
     names: MAINNET_NAMES,
   },
@@ -83,5 +88,9 @@ const files = import.meta.glob<{ contracts: { name: string; package_hash: string
   { eager: true, import: "default" },
 );
 export const DEPLOYED = files[`./contracts/${NETWORK.chainName}.json`] ?? null;
+
+/** Where the source lives, and the guide to running a deployment of one's own. */
+export const REPO_URL = "https://github.com/odradev/casper-escrow";
+export const DEPLOY_GUIDE_URL = `${REPO_URL}/blob/main/DEPLOY.md`;
 
 export const CSPR_CLICK_SCRIPT = "https://cdn.cspr.click/ui/v1.10.1/csprclick-client-1.10.1.js";

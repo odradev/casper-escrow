@@ -16,7 +16,7 @@ import init, {
 } from "escrow-wasm-client";
 import escrowSchema from "../../resources/casper_contract_schemas/escrow_schema.json";
 import testTokenSchema from "../../resources/casper_contract_schemas/test_token_schema.json";
-import { CSPR_CLICK_SCRIPT, DEPLOYED, NETWORK } from "./config";
+import { CSPR_CLICK_SCRIPT, DEPLOY_GUIDE_URL, DEPLOYED, NETWORK, REPO_URL } from "./config";
 import { DEV_ACCOUNTS, installDevWallet } from "./devwallet";
 import { looksLikeName, Names } from "./names";
 import { ContractStorage, formattedKey, initStorage, Node } from "./storage";
@@ -55,6 +55,7 @@ const GAS = {
   onePayout: { token: (5n * CSPR) / 2n, cspr: (9n * CSPR) / 2n },
   twoPayouts: { token: (7n * CSPR) / 2n, cspr: 7n * CSPR },
   threePayouts: { token: 4n * CSPR, cspr: 10n * CSPR },
+  fourPayouts: { token: (9n * CSPR) / 2n, cspr: (25n * CSPR) / 2n },
 };
 
 const ERRORS: Record<number, string> = {
@@ -123,6 +124,7 @@ interface Deal {
   toSeller: bigint;
   toBuyer: bigint;
   toArbiter: bigint;
+  commission: bigint;
   buyerOffer: bigint | null;
   sellerOffer: bigint | null;
   meta: TokenMeta;
@@ -136,6 +138,9 @@ let escrow: EscrowWasmClient;
 let escrowStorage: ContractStorage;
 let escrowHash = "";
 let testTokenHash: string | null = null;
+/** The commission of this deployment: hundredths of a percent of what a seller is paid. */
+let commissionBps = 0;
+let commissionRecipient: string | null = null;
 let names: Names | null = null;
 let account: { publicKey: string; address: string } | null = null;
 let busy = false;
@@ -364,6 +369,7 @@ async function loadDeal(id: bigint): Promise<Deal | null> {
     toSeller: BigInt(deal.to_seller),
     toBuyer: BigInt(deal.to_buyer),
     toArbiter: BigInt(deal.to_arbiter),
+    commission: BigInt(deal.commission),
     buyerOffer: buyerOffer === null ? null : BigInt(buyerOffer),
     sellerOffer: sellerOffer === null ? null : BigInt(sellerOffer),
     meta: await tokenMeta(token === null ? null : formattedKey(token)).catch(() => ({ symbol: "units", decimals: 0 })),
@@ -395,6 +401,8 @@ function roleOf(deal: Deal, owner: string | undefined): Role | null {
   if (owner === deal.seller) return "seller";
   return owner === deal.arbiter ? "arbiter" : null;
 }
+
+const commissionPercent = () => `${commissionBps / 100}%`;
 
 function splitText(deal: Deal): string {
   const seller = deal.bps / 100;
@@ -514,8 +522,12 @@ async function withBusy(action: () => Promise<void>) {
   }
 }
 
-const payoutGas = (deal: Deal, payouts: "onePayout" | "twoPayouts" | "threePayouts") =>
-  GAS[payouts][deal.token === null ? "cspr" : "token"];
+type Payouts = "onePayout" | "twoPayouts" | "threePayouts";
+const WITH_COMMISSION = { onePayout: "twoPayouts", twoPayouts: "threePayouts", threePayouts: "fourPayouts" } as const;
+
+/** The limit for closing a deal with so many payouts; a commission is one payout more. */
+const payoutGas = (deal: Deal, payouts: Payouts) =>
+  GAS[commissionBps > 0 ? WITH_COMMISSION[payouts] : payouts][deal.token === null ? "cspr" : "token"];
 
 // ---------- View: home ----------
 
@@ -533,7 +545,7 @@ function renderHome() {
           <a class="btn" href="#/deals">My deals</a>
         </div>
         <div class="facts">
-          <span><b>0%</b> fee</span>
+          <span><b>${commissionBps > 0 ? commissionPercent() : "No"}</b> commission</span>
           <span><b>CSPR</b> and any CEP-18 token</span>
           <span><b>No owner,</b> no upgrades</span>
           <span><b>Open</b> source</span>
@@ -577,7 +589,8 @@ function renderHome() {
         <dt>Contract</dt><dd><span class="mono">${esc(escrowHash)}</span> · ${contract}</dd>
         <dt>Owner or admin keys</dt><dd>None</dd>
         <dt>Upgrades</dt><dd>Not possible. The contract package is locked.</dd>
-        <dt>Fee</dt><dd>None. You pay only the network’s transaction fee.</dd>
+        <dt>Commission</dt><dd>${commissionBps > 0 ? `${commissionPercent()} of what a seller is paid, to ${who(commissionRecipient!)}. Nothing is taken from a deposit that goes back to the buyer. It was set when the contract was deployed and cannot be changed.` : "None. You pay only the network’s transaction fee."}</dd>
+        <dt>Source code</dt><dd><a href="${REPO_URL}" target="_blank" rel="noopener">${REPO_URL.replace("https://", "")}</a></dd>
         <dt>Security audit</dt><dd>Not audited yet.</dd>
       </dl>
     </div>`;
@@ -665,6 +678,7 @@ function historyHtml(deal: Deal): string {
       `${money(deal.toSeller, deal.meta)} to the seller`,
       `${money(deal.toBuyer, deal.meta)} to the buyer`,
       ...(deal.toArbiter > 0n ? [`${money(deal.toArbiter, deal.meta)} to the arbiter`] : []),
+      ...(deal.commission > 0n ? [`${money(deal.commission, deal.meta)} commission`] : []),
     ];
     rows.push([deal.closedAt, `${how[deal.state]}: ${parts.join(", ")}`]);
   }
@@ -829,6 +843,7 @@ async function renderDeal(id: bigint, ticket: number) {
             <dt>Deliver by</dt><dd class="num">${when(deal.deliveryDeadline)}</dd>
             <dt>Review</dt><dd>${period(deal.reviewPeriod)} after delivery</dd>
             <dt>If disputed</dt><dd>${disputed}</dd>
+            ${commissionBps > 0 ? `<dt>Commission</dt><dd>${commissionPercent()} of what the seller is paid</dd>` : ""}
             ${deal.token ? `<dt>Token</dt><dd class="mono">${esc(deal.token)}</dd>` : ""}
           </dl>
         </div>
@@ -1081,6 +1096,7 @@ function renderNew() {
       <li>You deposit <b class="num">${amountText}</b> now. It leaves your wallet.</li>
       <li><b>${esc(partyText("seller") || "The seller")}</b> has until <b>${Number.isNaN(deadline) ? "the deadline" : when(deadline)}</b> to deliver. If they don’t, you get everything back.</li>
       <li>After delivery you have <b>${esc(review)}</b> to object. If you say nothing, the seller is paid in full.</li>
+      ${commissionBps > 0 ? `<li>Of whatever the seller is paid, <b>${commissionPercent()}</b> is kept as a commission. You pay nothing on top.</li>` : ""}
       <li>${arbiter ? `If you object, <b>${esc(arbiter)}</b> decides within ${esc(dispute)}. With no decision: ${rule}.` : `If you object and do not settle within ${esc(dispute)}: ${rule}.`}</li>`;
     $("submit").textContent = account ? `Deposit ${amount === null ? "" : money(amount, meta)}`.trim() : "Connect a wallet first";
     $<HTMLButtonElement>("submit").disabled = busy || !account;
@@ -1347,6 +1363,13 @@ async function start() {
   escrowStorage = await ContractStorage.open(node, escrowSchema, escrowHash);
   if (NETWORK.testToken && DEPLOYED.contracts.some((contract) => contract.name === "TestToken")) {
     testTokenHash = key(contracts.get("TestToken").address);
+  }
+  commissionBps = Number((await escrowStorage.read("commission_bps")) ?? "0");
+  const recipient = await escrowStorage.read("commission_recipient");
+  commissionRecipient = recipient === null ? null : formattedKey(recipient);
+  if (NETWORK.demo) {
+    $("demo").innerHTML = `This is a demo on ${esc(NETWORK.label)}: the contract is not audited and nothing here has value. <a href="${REPO_URL}" target="_blank" rel="noopener">Source on GitHub</a> · <a href="${DEPLOY_GUIDE_URL}" target="_blank" rel="noopener">Run your own on the mainnet</a>`;
+    $("demo").hidden = false;
   }
   $("footer-contract").innerHTML = `Contract on ${esc(NETWORK.label)}: <span class="mono">${esc(escrowHash)}</span>`;
 
