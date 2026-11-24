@@ -141,6 +141,8 @@ let testTokenHash: string | null = null;
 let commissionBps = 0;
 let commissionRecipient: string | null = null;
 let names: Names | null = null;
+/** The name contracts being opened, so a name typed early waits for them instead of failing. */
+let namesOpening: Promise<Names | null> = Promise.resolve(null);
 let account: { publicKey: string; address: string } | null = null;
 let busy = false;
 /** Whether the contract can be read: the wasm modules are loaded and its storage is open. */
@@ -273,10 +275,11 @@ function decorate(root: HTMLElement) {
 async function resolveParty(text: string): Promise<{ address: string; note: string }> {
   const value = text.trim();
   if (looksLikeName(value)) {
-    if (!names) throw new Error("Names cannot be read on this network. Enter a public key.");
-    const found = await names.resolve(value);
+    const service = names ?? (await namesOpening);
+    if (!service) throw new Error("Names cannot be read right now. Enter a public key.");
+    const found = await service.resolve(value);
     if (!found) throw new Error(`${value.toLowerCase()} does not point at an account.`);
-    const from = names.note ? ` (${names.note})` : "";
+    const from = service.note ? ` (${service.note})` : "";
     return { address: found, note: `${value.toLowerCase()} is ${shortKey(found)}${from}` };
   }
   let parsed: string;
@@ -1171,6 +1174,11 @@ function renderNew() {
       summary();
       return null;
     }
+    // Reading a name takes a few requests: say so while they run.
+    if (looksLikeName(text)) {
+      hint.className = "hint";
+      hint.textContent = `Looking up ${text.trim().toLowerCase()}…`;
+    }
     try {
       const party = await resolveParty(text);
       if (input(`f-${field}`).value !== text) return "The field changed while it was being read.";
@@ -1298,8 +1306,18 @@ function renderNew() {
   form.addEventListener("input", summary);
   input("f-token").addEventListener("change", () => void describeToken());
   input("f-token-hash").addEventListener("change", () => void describeToken());
-  input("f-seller").addEventListener("change", () => void lookUp("seller"));
-  input("f-arbiter").addEventListener("change", () => void lookUp("arbiter"));
+  // A party is read a moment after the typing stops, and at once when the field is left.
+  for (const field of ["seller", "arbiter"] as const) {
+    let pending: number | undefined;
+    input(`f-${field}`).addEventListener("input", () => {
+      window.clearTimeout(pending);
+      pending = window.setTimeout(() => void lookUp(field), 400);
+    });
+    input(`f-${field}`).addEventListener("change", () => {
+      window.clearTimeout(pending);
+      void lookUp(field);
+    });
+  }
   summary();
   void describeToken();
 }
@@ -1407,12 +1425,16 @@ async function start() {
 
   // Names are a convenience: the app works without them.
   if (NETWORK.names) {
-    void Names.open(NETWORK.names)
+    namesOpening = Names.open(NETWORK.names)
       .then((opened) => {
         names = opened;
         decorate(view);
+        return opened;
       })
-      .catch((error) => console.warn("CSPR.name is not available:", error));
+      .catch((error) => {
+        console.warn("CSPR.name is not available:", error);
+        return null;
+      });
   }
 
   CsprClickCallbacks.onSignedIn((info: AccountInfo) => void onAccount(info));
