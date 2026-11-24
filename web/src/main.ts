@@ -278,7 +278,11 @@ async function resolveParty(text: string): Promise<{ address: string; note: stri
   try {
     parsed = parseAddress(value);
   } catch {
-    throw new Error("Enter a .cspr name, a public key or an account hash.");
+    throw new Error(
+      /^0[12][0-9a-fA-F]+$/.test(value)
+        ? "This is not a valid public key. Check that it was copied whole."
+        : "Enter a .cspr name, a public key or an account hash.",
+    );
   }
   return { address: parsed, note: devNames.get(parsed) ?? shortKey(parsed) };
 }
@@ -1057,7 +1061,9 @@ function renderNew() {
   /** A party of the form by the name it resolved to, or as typed. */
   const partyText = (field: "seller" | "arbiter") => {
     const typed = input(`f-${field}`).value.trim();
-    if (looksLikeName(typed) || !resolved[field]) return typed;
+    if (looksLikeName(typed)) return typed;
+    // Something unreadable is shown shortened, so a long key does not fill the panel.
+    if (!resolved[field]) return typed.length > 24 ? `${typed.slice(0, 10)}…${typed.slice(-6)}` : typed;
     return devNames.get(resolved[field]!) ?? shortKey(resolved[field]!);
   };
 
@@ -1115,35 +1121,42 @@ function renderNew() {
     summary();
   };
 
-  const lookUp = async (field: "seller" | "arbiter") => {
+  /** Reads a party field into `resolved`. Returns what is wrong with it, or `null`. */
+  const lookUp = async (field: "seller" | "arbiter"): Promise<string | null> => {
     const text = input(`f-${field}`).value;
     const hint = $(`h-${field}`);
     resolved[field] = null;
     if (!text.trim()) {
       hint.className = "hint";
       hint.textContent = field === "arbiter" ? "Agree with them first. A dispute is argued outside this app." : "";
-      return;
+      summary();
+      return null;
     }
     try {
       const party = await resolveParty(text);
-      if (input(`f-${field}`).value !== text) return;
+      if (input(`f-${field}`).value !== text) return "The field changed while it was being read.";
       resolved[field] = party.address;
       hint.textContent = `✓ ${party.note}`;
       hint.className = "hint good";
       summary();
+      return null;
     } catch (error) {
-      if (input(`f-${field}`).value !== text) return;
+      if (input(`f-${field}`).value !== text) return "The field changed while it was being read.";
       hint.textContent = errorText(error);
       hint.className = "hint bad";
+      summary();
+      return errorText(error);
     }
   };
 
   /** Reads and checks the form. Throws a sentence for the person who filled it in. */
   const read = async (): Promise<NewDeal> => {
     if (!account) throw new Error("Connect a wallet first.");
-    await Promise.all([lookUp("seller"), lookUp("arbiter")]);
+    const [sellerProblem, arbiterProblem] = await Promise.all([lookUp("seller"), lookUp("arbiter")]);
+    if (sellerProblem) throw new Error(`The seller: ${sellerProblem}`);
     if (!resolved.seller) throw new Error("Say who you are paying.");
     const hasArbiter = input("f-arbiter").value.trim() !== "";
+    if (arbiterProblem) throw new Error(`The arbiter: ${arbiterProblem}`);
     if (hasArbiter && !resolved.arbiter) throw new Error("The arbiter could not be read.");
     const arbiter = hasArbiter ? resolved.arbiter : null;
     const parties = [account.address, resolved.seller, ...(arbiter ? [arbiter] : [])];

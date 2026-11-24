@@ -175,6 +175,8 @@ legend { font-weight: 600; padding: 0 6px; }
 input[type="range"] { accent-color: var(--accent); padding: 0; border: 0; }
 .agree { display: grid; gap: 14px; position: sticky; top: 16px; }
 .agree ol { margin: 0; padding-left: 18px; display: grid; gap: 9px; }
+.agree li { min-width: 0; overflow-wrap: anywhere; }
+.agree { min-width: 0; }
 
 /* my deals */
 .group { display: grid; gap: 10px; }
