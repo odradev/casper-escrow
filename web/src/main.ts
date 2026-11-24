@@ -2,7 +2,6 @@ import "./style.css";
 import init, {
   AccountInfo,
   Address,
-  Contracts,
   CsprClickCallbacks,
   EscrowErrors,
   EscrowWasmClient,
@@ -144,6 +143,7 @@ let commissionRecipient: string | null = null;
 let names: Names | null = null;
 let account: { publicKey: string; address: string } | null = null;
 let busy = false;
+/** Whether the contract can be read: the wasm modules are loaded and its storage is open. */
 let ready = false;
 let renderTicket = 0;
 const tokenMetas = new Map<string, Promise<TokenMeta>>();
@@ -545,7 +545,7 @@ function renderHome() {
           <a class="btn" href="#/deals">My deals</a>
         </div>
         <div class="facts">
-          <span><b>${commissionBps > 0 ? commissionPercent() : "No"}</b> commission</span>
+          <span id="home-commission"></span>
           <span><b>CSPR</b> and any CEP-18 token</span>
           <span><b>No owner,</b> no upgrades</span>
           <span><b>Open</b> source</span>
@@ -589,11 +589,13 @@ function renderHome() {
         <dt>Contract</dt><dd><span class="mono">${esc(escrowHash)}</span> · ${contract}</dd>
         <dt>Owner or admin keys</dt><dd>None</dd>
         <dt>Upgrades</dt><dd>Not possible. The contract package is locked.</dd>
-        <dt>Commission</dt><dd>${commissionBps > 0 ? `${commissionPercent()} of what a seller is paid, to ${who(commissionRecipient!)}. Nothing is taken from a deposit that goes back to the buyer. It was set when the contract was deployed and cannot be changed.` : "None. You pay only the network’s transaction fee."}</dd>
+        <dt>Commission</dt><dd id="home-commission-detail"></dd>
         <dt>Source code</dt><dd><a href="${REPO_URL}" target="_blank" rel="noopener">${REPO_URL.replace("https://", "")}</a></dd>
         <dt>Security audit</dt><dd>Not audited yet.</dd>
       </dl>
     </div>`;
+
+  fillHome();
 
   $<HTMLFormElement>("lookup").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -601,6 +603,27 @@ function renderHome() {
     if (/^\d+$/.test(value)) location.hash = `#/deal/${value}`;
     else $("lookup-hint").textContent = "Enter the number of a deal.";
   });
+}
+
+/**
+ * Fills in what the start page says about the commission, which is read from the contract. The
+ * page itself is drawn at once, before anything is loaded.
+ */
+function fillHome() {
+  const fact = document.getElementById("home-commission");
+  const detail = document.getElementById("home-commission-detail");
+  if (!fact || !detail) return;
+  if (!ready) {
+    fact.innerHTML = `<b>…</b> commission`;
+    detail.textContent = "Reading it from the contract…";
+    return;
+  }
+  fact.innerHTML = `<b>${commissionBps > 0 ? commissionPercent() : "No"}</b> commission`;
+  detail.innerHTML =
+    commissionBps > 0
+      ? `${commissionPercent()} of what a seller is paid, to ${who(commissionRecipient!)}. Nothing is taken from a deposit that goes back to the buyer. It was set when the contract was deployed and cannot be changed.`
+      : "None. You pay only the network’s transaction fee.";
+  decorate(detail);
 }
 
 // ---------- View: a deal ----------
@@ -1292,7 +1315,6 @@ function route(): { name: "home" | "deals" | "new" } | { name: "deal"; id: bigin
 }
 
 async function render() {
-  if (!ready) return;
   const ticket = ++renderTicket;
   const current = route();
   for (const link of document.querySelectorAll<HTMLElement>("[data-nav]")) {
@@ -1301,6 +1323,7 @@ async function render() {
   }
   try {
     if (current.name === "home") renderHome();
+    else if (!ready) view.innerHTML = `<div class="sheet empty">Loading…</div>`;
     else if (current.name === "new") renderNew();
     else if (current.name === "deals") await renderDeals(ticket);
     else if (current.name === "deal") await renderDeal(current.id, ticket);
@@ -1354,24 +1377,33 @@ function loadCsprClick(): Promise<void> {
 async function start() {
   $("network").textContent = NETWORK.label;
   if (!DEPLOYED) throw new Error(`The contract is not deployed on ${NETWORK.label} yet.`);
-  await Promise.all([init(), initStorage()]);
+  const deployed = (name: string) => DEPLOYED.contracts.find((contract) => contract.name === name)?.package_hash;
+  escrowHash = deployed("Escrow") ?? "";
+  if (!escrowHash) throw new Error(`The contract is not deployed on ${NETWORK.label} yet.`);
+  testTokenHash = NETWORK.testToken ? (deployed("TestToken") ?? null) : null;
 
-  const contracts = new Contracts(DEPLOYED);
-  client = new OdraWasmClient(NETWORK.nodeUrl, NETWORK.speculativeUrl, NETWORK.chainName);
-  escrowHash = key(contracts.get("Escrow").address);
-  escrow = new EscrowWasmClient(client, address(escrowHash));
-  escrowStorage = await ContractStorage.open(node, escrowSchema, escrowHash);
-  if (NETWORK.testToken && DEPLOYED.contracts.some((contract) => contract.name === "TestToken")) {
-    testTokenHash = key(contracts.get("TestToken").address);
-  }
-  commissionBps = Number((await escrowStorage.read("commission_bps")) ?? "0");
-  const recipient = await escrowStorage.read("commission_recipient");
-  commissionRecipient = recipient === null ? null : formattedKey(recipient);
   if (NETWORK.demo) {
     $("demo").innerHTML = `This is a demo on ${esc(NETWORK.label)}: the contract is not audited and nothing here has value. <a href="${REPO_URL}" target="_blank" rel="noopener">Source on GitHub</a> · <a href="${DEPLOY_GUIDE_URL}" target="_blank" rel="noopener">Run your own on the mainnet</a>`;
     $("demo").hidden = false;
   }
   $("footer-contract").innerHTML = `Contract on ${esc(NETWORK.label)}: <span class="mono">${esc(escrowHash)}</span>`;
+
+  // The start page is text: it is on the screen before the wasm modules and the contract's
+  // state, a few megabytes and a few requests, have arrived.
+  window.addEventListener("hashchange", () => void render());
+  $("toast-close").addEventListener("click", () => (toast.hidden = true));
+  void render();
+
+  await Promise.all([init(), initStorage()]);
+  client = new OdraWasmClient(NETWORK.nodeUrl, NETWORK.speculativeUrl, NETWORK.chainName);
+  escrow = new EscrowWasmClient(client, address(escrowHash));
+  escrowStorage = await ContractStorage.open(node, escrowSchema, escrowHash);
+  const [bps, recipient] = await Promise.all([
+    escrowStorage.read("commission_bps"),
+    escrowStorage.read("commission_recipient"),
+  ]);
+  commissionBps = Number(bps ?? "0");
+  commissionRecipient = recipient === null ? null : formattedKey(recipient);
 
   // Names are a convenience: the app works without them.
   if (NETWORK.names) {
@@ -1395,15 +1427,16 @@ async function start() {
 
   connectBtn.addEventListener("click", () => client.signIn().catch(console.error));
   $("disconnect").addEventListener("click", () => client.signOut().catch(console.error));
-  $("toast-close").addEventListener("click", () => (toast.hidden = true));
-  window.addEventListener("hashchange", () => void render());
 
   if (NETWORK.devWallet) {
     for (const dev of DEV_ACCOUNTS) devNames.set(key(Address.fromPublicKey(dev.publicKey)), dev.name);
   }
 
   ready = true;
-  await render();
+  // The start page is on the screen already, perhaps with something typed into it: only its
+  // commission is filled in. Any other view was waiting for this.
+  if (route().name === "home") fillHome();
+  else await render();
 
   // Deadlines pass and other parties act: the views that show deals are read again now and then,
   // unless something is being typed or sent.
