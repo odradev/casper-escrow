@@ -148,6 +148,15 @@ let busy = false;
 /** Whether the contract can be read: the wasm modules are loaded and its storage is open. */
 let ready = false;
 let renderTicket = 0;
+/**
+ * Whether the page is being left. A browser cancels the requests still under way then, and they
+ * fail like a node that does not answer; that is not something to show an error for.
+ */
+let leaving = false;
+window.addEventListener("beforeunload", () => (leaving = true));
+window.addEventListener("pagehide", () => (leaving = true));
+// A page restored from the back/forward cache is alive again.
+window.addEventListener("pageshow", () => (leaving = false));
 const tokenMetas = new Map<string, Promise<TokenMeta>>();
 const tokenStorages = new Map<string, Promise<ContractStorage>>();
 /** The development accounts by address, so the local network shows `user-2` instead of a hash. */
@@ -1346,7 +1355,7 @@ async function render() {
     else if (current.name === "deals") await renderDeals(ticket);
     else if (current.name === "deal") await renderDeal(current.id, ticket);
   } catch (error) {
-    if (ticket !== renderTicket) return;
+    if (ticket !== renderTicket || leaving) return;
     console.error(error);
     view.innerHTML = `<div class="notice">${esc(errorText(error))}</div>`;
   }
@@ -1494,6 +1503,7 @@ async function start() {
 }
 
 start().catch((error) => {
+  if (leaving) return;
   console.error("The app could not start:", error);
   view.innerHTML = `<div class="notice">The app could not start: ${esc(errorText(error))}</div>`;
 });

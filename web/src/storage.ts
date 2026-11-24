@@ -41,12 +41,18 @@ export class Node {
     // A node that is down fails the request itself (the browser reports only "Failed to fetch")
     // or answers with an error status. Either way the reader needs to hear that it is the node.
     const unavailable = "The Casper node this page reads from is not answering. Try again in a few minutes.";
-    let response: Response;
-    try {
-      response = await fetch(this.rpcUrl, {
+    const request = () =>
+      fetch(this.rpcUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      });
+    let response: Response;
+    try {
+      // A request can be lost on the way for a reason that is gone a moment later: one more try.
+      response = await request().catch(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        return request();
       });
     } catch {
       throw new Error(unavailable);
