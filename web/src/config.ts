@@ -62,7 +62,8 @@ const NETWORKS: Record<string, Network> = {
     devWallet: false,
     demo: true,
     testToken: true,
-    names: null,
+    // The testnet has no names of its own to show the feature with: the mainnet's are read.
+    names: { ...MAINNET_NAMES, note: "name read from the mainnet" },
   },
   mainnet: {
     label: "Casper Mainnet",

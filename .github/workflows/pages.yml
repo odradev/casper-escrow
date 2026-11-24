@@ -1,0 +1,82 @@
+# Builds the web app for the Casper testnet and publishes it to GitHub Pages.
+# In the repository settings, Pages must be set to deploy from "GitHub Actions".
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push replaces a build that has not started deploying.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # The Rust toolchain is pinned by rust-toolchain.toml; rustup installs it on first use.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            storage_reader/target
+          key: pages-${{ runner.os }}-${{ hashFiles('.github/workflows/pages.yml', 'rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: pages-${{ runner.os }}-
+
+      # cargo-odra comes from its 0.2.1 release branch: `generate-client` of the 0.2.0 on crates.io
+      # refuses a project that is not a Cargo workspace. Switch to crates.io once 0.2.1 is published.
+      - name: Install cargo-odra and wasm-pack
+        run: |
+          cargo install cargo-odra --locked --force \
+            --git https://github.com/odradev/cargo-odra --rev c050bde07f1dbfd647ace172b15b0e8a968a1ff0
+          command -v wasm-pack || cargo install wasm-pack --locked
+          rustup target add wasm32-unknown-unknown
+
+      # The client the app sends transactions with. No key is given to it: the app signs through
+      # the visitor's wallet.
+      - name: Generate the contract client
+        run: cargo odra generate-client
+
+      - name: Build the app
+        working-directory: web
+        run: |
+          npm run reader
+          npm ci
+          npm run contracts casper-test
+          npm run build
+        env:
+          VITE_NETWORK: testnet
+          # The id registered with CSPR.click for odra.dev, where the organisation's Pages are served.
+          VITE_CSPR_CLICK_APP_ID: c0ec1653-18b0-45aa-bdb7-1bbeefac
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
