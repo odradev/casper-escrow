@@ -1480,13 +1480,20 @@ async function start() {
       else client.signOut().catch(console.error);
     });
   } else {
-    // Loaded last: the client listens for the events the script sends once it is ready.
-    await loadCsprClick();
-    connectBtn.disabled = false;
+    // Loaded last: the client listens for the events the script sends once it is ready. Without
+    // it nothing can be signed, but everything can still be read: the page stays as it is.
+    try {
+      await loadCsprClick();
+      connectBtn.disabled = false;
+    } catch (error) {
+      console.error(error);
+      connectBtn.textContent = "Wallet unavailable";
+      connectBtn.title = "CSPR.click, which connects the wallet, could not be loaded. Reload the page to try again.";
+    }
   }
 }
 
 start().catch((error) => {
-  console.error(error);
+  console.error("The app could not start:", error);
   view.innerHTML = `<div class="notice">The app could not start: ${esc(errorText(error))}</div>`;
 });
