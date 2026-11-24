@@ -1341,9 +1341,13 @@ function route(): { name: "home" | "deals" | "new" } | { name: "deal"; id: bigin
   return { name: "home" };
 }
 
+/** What the view shows now: the address and the account it was read for. */
+let shown = "";
+
 async function render() {
   const ticket = ++renderTicket;
   const current = route();
+  const wanted = `${location.hash}|${account?.address ?? ""}`;
   for (const link of document.querySelectorAll<HTMLElement>("[data-nav]")) {
     if (link.dataset.nav === current.name) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
@@ -1352,8 +1356,20 @@ async function render() {
     if (current.name === "home") renderHome();
     else if (!ready) view.innerHTML = `<div class="sheet empty">Loading…</div>`;
     else if (current.name === "new") renderNew();
-    else if (current.name === "deals") await renderDeals(ticket);
-    else if (current.name === "deal") await renderDeal(current.id, ticket);
+    else {
+      // These views read the chain first. Arriving at one says so at once; reading the same one
+      // again, after a transaction or on the timer, keeps what is on the screen until the new
+      // state is there.
+      if (wanted !== shown) {
+        view.innerHTML =
+          current.name === "deal"
+            ? `<div class="sheet empty">Reading deal ${current.id} from the chain…</div>`
+            : `<div class="row"><h2>My deals</h2></div><div class="sheet empty">Reading your deals from the chain…</div>`;
+      }
+      if (current.name === "deal") await renderDeal(current.id, ticket);
+      else await renderDeals(ticket);
+    }
+    if (ticket === renderTicket) shown = wanted;
   } catch (error) {
     if (ticket !== renderTicket || leaving) return;
     console.error(error);
